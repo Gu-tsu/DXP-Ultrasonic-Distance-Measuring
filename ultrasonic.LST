@@ -1,0 +1,272 @@
+C51 COMPILER V9.01   超蒧波瞋距数_牍_                                                      09/06/2018 10:19:45 PAGE 1   
+
+
+C51 COMPILER V9.01, COMPILATION OF MODULE 超蒧波瞋距数_牍_
+OBJECT MODULE PLACED IN 超声波测距数码管.OBJ
+COMPILER INVOKED BY: D:\Program Files (x86)\LEIL 4\C51\BIN\C51.EXE 超声波测距数码管.c BROWSE DEBUG OBJECTEXTEND
+
+line level    source
+
+   1          #include <reg52.h>               //调用单片机头文件
+   2          #define uchar unsigned char  //无符号字符型 宏定义      变量范围0~255
+   3          #define uint  unsigned int       //无符号整型 宏定义    变量范围0~65535
+   4          #include <intrins.h>
+   5          
+   6          
+   7          //数码管段选定义      0     1    2    3    4    5       6         7       8        9    
+   8          uchar code smg_du[]={0x28,0xee,0x32,0xa2,0xe4,0xa1,0x21,0xea,0x20,0xa0};         //断码
+   9          
+  10          
+  11          uchar dis_smg[4]   ={0xff,0xff,0xff,0xff};
+  12          
+  13          //数码管位选定义
+  14          sbit smg_we1 = P3^4;        //数码管位选定义
+  15          sbit smg_we2 = P3^5;
+  16          sbit smg_we3 = P3^6;
+  17          sbit smg_we4 = P3^7;
+  18          
+  19          sbit c_send   = P3^2;           //超声波发射
+  20          sbit c_recive = P3^3;           //超声波接收
+  21          
+  22          sbit beep = P2^3;   //蜂鸣器IO口定义
+  23           uint flag_300ms = 1;
+  24          
+  25          long distance;          //距离
+  26          uint set_d=50;              //距离
+  27          uchar flag_csb_juli;    //超声波超出量程
+  28          uint  flag_time0;       //用来保存定时器0的时候的
+  29          
+  30          uchar menu_1;           //菜单设计的变量
+  31           
+  32          /***********************1ms延时函数*****************************/
+  33          void delay_1ms(uint q)
+  34          {
+  35   1              uint i,j;
+  36   1              for(i=0;i<q;i++)
+  37   1                      for(j=0;j<120;j++);
+  38   1      }
+  39          
+  40          
+  41          /********************独立按键程序*****************/
+  42          uchar key_can;   //按键值
+  43          
+  44          void key()          //独立按键程序
+  45          {
+  46   1              static uchar key_new;  //key_new  这个变量的功能是做按键松手检测的  
+  47   1              key_can = 0;                   //按键值还原
+  48   1              P2 |= 0x07;
+  49   1              if((P2 & 0x07) != 0x07)         //按键按下
+  50   1              {
+  51   2                      delay_1ms(1);           //按键消抖动
+  52   2                      if(((P2 & 0x07) != 0x07) && (key_new == 1))
+  53   2                      {                                               //确认是按键按下
+  54   3                              key_new = 0;            //key_new = 0   说明按键已按下
+  55   3                              switch(P2 & 0x07)
+C51 COMPILER V9.01   超蒧波瞋距数_牍_                                                      09/06/2018 10:19:45 PAGE 2   
+
+  56   3                              {
+  57   4                                      case 0x06: key_can = 3; break;     //得到k3键值
+  58   4                                      case 0x05: key_can = 2; break;     //得到k2键值
+  59   4                                      case 0x03: key_can = 1; break;     //得到k1键值
+  60   4                              }
+  61   3                      }                       
+  62   2              }
+  63   1              else 
+  64   1                      key_new = 1;    //key_new = 1   说明按键已经松开了
+  65   1      }
+  66          
+  67          /****************按键处理显示函数***************/
+  68          void key_with()
+  69          {
+  70   1              if(key_can == 1)                //设置键
+  71   1              {
+  72   2                      menu_1 ++;
+  73   2                      if(menu_1 >= 2)
+  74   2                      {
+  75   3                              menu_1 = 0;
+  76   3                      }
+  77   2              }
+  78   1              if(menu_1 == 1)                 //设置报警
+  79   1              {
+  80   2                      if(key_can == 2)
+  81   2                      {
+  82   3                              set_d ++ ;              //加1
+  83   3                              if(set_d > 500)
+  84   3                                      set_d = 500;
+  85   3                      }
+  86   2                      if(key_can == 3)
+  87   2                      {
+  88   3                              set_d -- ;              //减1
+  89   3                              if(set_d <= 1)
+  90   3                                      set_d = 1;
+  91   3                      }
+  92   2                      dis_smg[0] = smg_du[set_d % 10];                   //取小数显示
+  93   2                      dis_smg[1] = smg_du[set_d / 10 % 10] ;         //取个位显示
+  94   2                      dis_smg[2] = smg_du[set_d / 100 % 10] & 0xdf ; //取十位显示
+  95   2                      dis_smg[3] = 0x60;              //a
+  96   2              }       
+  97   1      }  
+  98          
+  99          /****************报警函数***************/
+ 100          void clock_h_l()
+ 101          {
+ 102   1              if(distance <= set_d)
+ 103   1              {
+ 104   2                      beep = ~beep;     //蜂鸣器报警  
+ 105   2              }
+ 106   1              else 
+ 107   1              {
+ 108   2                      beep = 1;               //取消报警
+ 109   2              }       
+ 110   1      }
+ 111          
+ 112          /***********************数码位选函数*****************************/
+ 113          void smg_we_switch(uchar i)
+ 114          {
+ 115   1              switch(i)
+ 116   1              {
+ 117   2                      case 0: smg_we1 = 0;  smg_we2 = 1; smg_we3 = 1;  smg_we4 = 1; break;
+C51 COMPILER V9.01   超蒧波瞋距数_牍_                                                      09/06/2018 10:19:45 PAGE 3   
+
+ 118   2                      case 1: smg_we1 = 1;  smg_we2 = 0; smg_we3 = 1;  smg_we4 = 1; break;
+ 119   2                      case 2: smg_we1 = 1;  smg_we2 = 1; smg_we3 = 0;  smg_we4 = 1; break;
+ 120   2                      case 3: smg_we1 = 1;  smg_we2 = 1; smg_we3 = 1;  smg_we4 = 0; break;
+ 121   2              }       
+ 122   1      }
+ 123          
+ 124          /***********************数码显示函数*****************************/
+ 125          void display()
+ 126          {
+ 127   1              static uchar i;   
+ 128   1              i++;
+ 129   1              if(i >= 4)
+ 130   1                      i = 0;  
+ 131   1              smg_we_switch(i);                //位选
+ 132   1              P1 = dis_smg[i];                 //段选         
+ 133   1      }
+ 134          
+ 135          /******************小延时函数*****************/
+ 136          void delay()
+ 137          {
+ 138   1              _nop_();                           //执行一条_nop_()指令就是1us
+ 139   1              _nop_(); 
+ 140   1              _nop_(); 
+ 141   1              _nop_(); 
+ 142   1              _nop_(); 
+ 143   1              _nop_(); 
+ 144   1              _nop_(); 
+ 145   1              _nop_(); 
+ 146   1              _nop_();  
+ 147   1              _nop_(); 
+ 148   1      }
+ 149          
+ 150          
+ 151          /*********************超声波测距程序*****************************/
+ 152          void send_wave()
+ 153          {
+ 154   1              c_send = 1;                        //10us的高电平触发 
+ 155   1              delay();
+ 156   1              c_send = 0;      
+ 157   1              TH0 = 0;                          //给定时器0清零
+ 158   1              TL0 = 0;
+ 159   1              TR0 = 0;                                  //关定时器0定时
+ 160   1              while(!c_recive);                 //当c_recive为零时等待
+ 161   1              TR0=1;
+ 162   1              while(c_recive)               //当c_recive为1计数并等待
+ 163   1              {
+ 164   2                      flag_time0 = TH0 * 256 + TL0;
+ 165   2                      if((flag_time0 > 40000))      //当超声波超过测量范围时，显示3个888
+ 166   2                      {
+ 167   3                              TR0 = 0;
+ 168   3                              flag_csb_juli = 2;
+ 169   3                              distance = 888;
+ 170   3                              break ;         
+ 171   3                      }
+ 172   2                      else 
+ 173   2                      {
+ 174   3                              flag_csb_juli = 1;      
+ 175   3                      }
+ 176   2              }
+ 177   1              if(flag_csb_juli == 1)
+ 178   1              {       
+ 179   2                      TR0=0;                                                   //关定时器0定时
+C51 COMPILER V9.01   超蒧波瞋距数_牍_                                                      09/06/2018 10:19:45 PAGE 4   
+
+ 180   2                      distance =flag_time0;                    //读出定时器0的时间
+ 181   2                      distance *= 0.017;               // 0.017 = 340M / 2 = 170M = 0.017M 算出来是米
+ 182   2                      if((distance > 600))                             //距离 = 速度 * 时间
+ 183   2                      {       
+ 184   3                              distance = 888;                          //如果大于6m就超出超声波的量程 
+ 185   3                      }
+ 186   2              }  
+ 187   1      }
+ 188          
+ 189          
+ 190          /*********************定时器0、定时器1初始化******************/
+ 191          void time_init()          
+ 192          {
+ 193   1              EA  = 1;                  //开总中断
+ 194   1              TMOD = 0X11;      //定时器0、定时器1工作方式1
+ 195   1              ET0 = 0;                  //关定时器0中断 
+ 196   1              TR0 = 1;                  //允许定时器0定时
+ 197   1              ET1 = 1;                  //开定时器1中断 
+ 198   1              TR1 = 1;                  //允许定时器1定时     
+ 199   1      }
+ 200          
+ 201          
+ 202          
+ 203          /***************主函数*****************/
+ 204          void main()
+ 205          {
+ 206   1              beep = 0;                //开机叫一声   
+ 207   1              delay_1ms(150);
+ 208   1              P0 = P1 = P2 = P3 = 0xff;          //初始化单片机IO口为高电平
+ 209   1              time_init();    //定时器初始化程序
+ 210   1              while(1)
+ 211   1              {       
+ 212   2                      flag_300ms ++;    //加1 
+ 213   2                      if(flag_300ms >= 300)
+ 214   2                      {               
+ 215   3                              flag_300ms = 0;
+ 216   3                              send_wave();    //测距离函数
+ 217   3                              if(menu_1 == 0)
+ 218   3                              {
+ 219   4                                      dis_smg[0] = smg_du[distance % 10];              //显示距离
+ 220   4                                      dis_smg[1] = smg_du[distance / 10 % 10];
+ 221   4                                      dis_smg[2] = smg_du[distance / 100 % 10] & 0xdf; ;      
+ 222   4                                      dis_smg[3] = 0xff;              //不显示
+ 223   4                              }
+ 224   3                              clock_h_l();     //报警函数
+ 225   3                      }
+ 226   2                      key();                       //按键函数
+ 227   2                      key_with();                      //按键处理函数
+ 228   2                      delay_1ms(1);            //延时1毫秒
+ 229   2              }
+ 230   1      }
+ 231          
+ 232          /*********************定时器1中断服务程序************************/
+ 233          void time1_int() interrupt 3
+ 234          {       
+ 235   1              TH1 = 0xf8;
+ 236   1              TL1 = 0x30;     //2ms
+ 237   1              display();              //数码管显示函数
+ 238   1       }
+ 239          
+ 240          
+ 241          
+C51 COMPILER V9.01   超蒧波瞋距数_牍_                                                      09/06/2018 10:19:45 PAGE 5   
+
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    786    ----
+   CONSTANT SIZE    =     10    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =     19    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
